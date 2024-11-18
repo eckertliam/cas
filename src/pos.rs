@@ -12,6 +12,12 @@ impl Pos {
     }
 }
 
+impl Default for Pos {
+    fn default() -> Self {
+        Self::new(1, 1)
+    }
+}
+
 impl Display for Pos {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.line, self.column)

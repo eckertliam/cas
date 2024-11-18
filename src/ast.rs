@@ -3,8 +3,8 @@ use crate::pos::Pos;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Number {
-    value: f64,
-    pos: Pos,
+    pub value: f64,
+    pub pos: Pos,
 }
 
 impl Display for Number {
@@ -15,8 +15,8 @@ impl Display for Number {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Symbol {
-    value: String,
-    pos: Pos,
+    pub value: String,
+    pub pos: Pos,
 }
 
 impl Display for Symbol {
@@ -27,8 +27,8 @@ impl Display for Symbol {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct List {
-    exprs: Vec<Expression>,
-    pos: Pos,
+    pub exprs: Vec<Expression>,
+    pub pos: Pos,
 }
 
 impl Display for List {
