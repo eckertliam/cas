@@ -49,6 +49,14 @@ impl Expression {
         Self::Number(Number { value, pos })
     }
 
+    pub fn new_symbol(value: String, pos: Pos) -> Self {
+        Self::Symbol(Symbol { value, pos })
+    }
+
+    pub fn new_list(exprs: Vec<Expression>, pos: Pos) -> Self {
+        Self::List(List { exprs, pos })
+    }
+
     pub fn pos(&self) -> Pos {
         match self {
             Expression::Number(n) => n.pos,
@@ -70,6 +78,12 @@ impl Display for Expression {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program(Vec<Expression>);
+
+impl Program {
+    pub fn new(exprs: &[Expression]) -> Self {
+        Self(exprs.to_vec())
+    }
+}
 
 impl Default for Program {
     fn default() -> Self {

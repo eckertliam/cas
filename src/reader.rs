@@ -7,7 +7,7 @@ use crate::pos::Pos;
 struct Reader<'src> {
     source: Peekable<Chars<'src>>,
     paren_depth: usize,
-    program: Program,
+    program: Vec<Expression>,
     line: usize,
     column: usize,
 }
@@ -17,7 +17,7 @@ impl<'src> Reader<'src> {
         Self {
             source: source.chars().peekable(),
             paren_depth: 0,
-            program: Program::default(),
+            program: Vec::new(),
             line: 1,
             column: 1,
         }
@@ -97,5 +97,82 @@ impl<'src> Reader<'src> {
         } else {
             Err(format!("Invalid number at {}:{}", pos.line, pos.column))
         }
+    }
+
+    fn read_symbol(&mut self) -> Result<Expression, String> {
+        let pos = self.pos();
+        let mut symbol = String::new();
+        while let Some(&c) = self.peek() {
+            if is_symbol_char(c) {
+                symbol.push(c);
+                self.consume();
+            } else {
+                break;
+            }
+        }
+        Ok(Expression::new_symbol(symbol, pos))
+    }
+
+
+    fn read_list(&mut self) -> Result<Expression, String> {
+        let pos = self.pos();
+        self.consume();
+        let mut exprs = Vec::new();
+        self.push();
+        while let Some(&c) = self.peek() {
+            if c == ')' {
+                self.pop()?;
+                self.consume();
+                break;
+            }
+            exprs.push(self.read_expression()?);
+        }
+        Ok(Expression::new_list(exprs, pos))
+    }
+
+    fn read_expression(&mut self) -> Result<Expression, String> {
+        self.skip_whitespace();
+        match self.peek() {
+            Some(ch) => match ch {
+                '(' => self.read_list(),
+                c if is_symbol_char(*c) => self.read_symbol(),
+                c if c.is_digit(10) => self.read_number(),
+                _ => Err(format!("Invalid expression at {}:{}", self.line, self.column)),
+            },
+            None => Err(format!("Unexpected end of file at {}:{}", self.line, self.column)),
+        }
+    }
+
+    pub fn read(&mut self) -> Result<Program, String> {
+        while let Some(_) = self.peek() {
+            let expr = self.read_expression()?;
+            self.program.push(expr);
+        }
+        Ok(Program::new(&self.program))
+    }
+}
+
+static SYMBOL_CHARS: [char; 12] = ['!', '?', '+', '-', '*', '/', '=', '<', '>', '&', '|', '%'];
+
+fn is_symbol_char(c: char) -> bool {
+    c.is_alphanumeric() || SYMBOL_CHARS.contains(&c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_num_list() {
+        let mut reader = Reader::new("(1 2 3)");
+        let program = reader.read().unwrap();
+        assert_eq!(program.to_string(), "(1 2 3)\n");
+    }
+
+    #[test]
+    fn test_symbol() {
+        let mut reader = Reader::new("(a b c)");
+        let program = reader.read().unwrap();
+        assert_eq!(program.to_string(), "(a b c)\n");
     }
 }
