@@ -1,8 +1,4 @@
-mod pos;
-mod ast;
-mod reader;
-mod compiler;
-mod primitives;
+mod model;
 
 fn main() {
     println!("Hello, world!");
