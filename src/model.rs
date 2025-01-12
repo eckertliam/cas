@@ -1,38 +1,41 @@
-pub struct Cons {
-    pub car: Box<Expr>,
-    pub cdr: Box<Expr>,
-}
+use std::{cell::RefCell, fmt::Display, rc::Rc};
 
-pub enum Expr {
-    Cons(Cons),
-    Nil,
-    Int(i64),
+use crate::env::Env;
+
+/// Objects are the core data type of the language
+/// AST expressions are converted to Objects prior to eval and compilation
+/// Objects are used within all passes of the interpreter and compiler
+pub enum Object {
+    Null,
     Bool(bool),
+    Integer(i64),
+    Float(f64),
+    Rational {
+        num: i64,
+        den: i64,
+    },
     String(String),
-    Lambda(Lambda),
     Symbol(String),
-    Quote(Box<Expr>),
-    If {
-        cond: Box<Expr>,
-        then: Box<Expr>,
-        _else: Box<Expr>,
-    },
-    Define {
-        name: String,
-        value: Box<Expr>,
-    },
-    Set {
-        name: String,
-        value: Box<Expr>,
-    },
-    Begin(Vec<Box<Expr>>),
-    Let {
-        bindings: Vec<(String, Box<Expr>)>,
-        body: Box<Expr>,
+    List(Rc<Vec<Object>>),
+    Lambda {
+        env: Rc<RefCell<Env>>,
+        params: Vec<String>,
+        body: Rc<Object>,
     },
 }
 
-pub struct Lambda {
-    pub params: Vec<String>,
-    pub body: Box<Expr>,
+impl Display for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Object::Null => write!(f, "null"),
+            Object::Bool(b) => write!(f, "{}", b),
+            Object::Integer(i) => write!(f, "{}", i),
+            Object::Float(fl) => write!(f, "{}", fl),
+            Object::Rational { num, den } => write!(f, "{} / {}", num, den),
+            Object::String(s) => write!(f, "\"{}\"", s),
+            Object::Symbol(s) => write!(f, "{}", s),
+            Object::List(l) => write!(f, "({})", l.iter().map(|e| e.to_string()).collect::<Vec<String>>().join(" ")),
+            Object::Lambda { env, params, body } => write!(f, "(lambda ({}) {})", params.join(" "), body),
+        }
+    }
 }
