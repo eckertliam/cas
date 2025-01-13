@@ -5,10 +5,6 @@ pub enum ExprKind {
     Bool(bool),
     Integer(i64),
     Float(f64),
-    Rational {
-        num: i64,
-        den: i64,
-    },
     String(String),
     Symbol(String),
     List(Rc<Vec<Expr>>),
@@ -21,7 +17,6 @@ impl Display for ExprKind {
             ExprKind::Bool(b) => write!(f, "{}", b),
             ExprKind::Integer(i) => write!(f, "{}", i),
             ExprKind::Float(fl) => write!(f, "{}", fl),
-            ExprKind::Rational { num, den } => write!(f, "{} / {}", num, den),
             ExprKind::String(s) => write!(f, "\"{}\"", s),
             ExprKind::Symbol(s) => write!(f, "{}", s),
             ExprKind::List(l) => write!(f, "({})", l.iter().map(|e| e.to_string()).collect::<Vec<String>>().join(" ")),
@@ -40,7 +35,7 @@ pub struct Location {
 /// Expressions are converted to Objects to be evaluated and compiled
 pub struct Expr {
     pub kind: ExprKind,
-    pub location: Location,
+    pub loc: Location,
 }
 
 impl Display for Expr {
