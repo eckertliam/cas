@@ -11,8 +11,8 @@
 #define INT_TAG 0b001
 #define BOOL_TAG 0b010
 #define CHAR_TAG 0b011
-#define NULL_VAL ((void *)0x14)
 
+#define NULL_VAL ((void *)0x14)
 #define FALSE_VAL ((void *)BOOL_TAG)
 #define TRUE_VAL ((void *)(0b110))
 

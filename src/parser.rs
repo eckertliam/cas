@@ -1,6 +1,82 @@
-use crate::ast::Location;
+use std::collections::VecDeque;
+use std::fmt;
 
-#[derive(Debug, Clone, Copy)]
+use crate::model::Expr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Location {
+    pub start_line: u32,
+    pub start_column: u32,
+    pub end_line: u32,
+    pub end_column: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    UnexpectedToken {
+        expected: String,
+        found: TokenKind,
+        location: Location,
+    },
+    UnexpectedEof {
+        expected: String,
+        location: Location,
+    },
+    InvalidNumber {
+        text: String,
+        location: Location,
+    },
+    UnterminatedString {
+        location: Location,
+    },
+    UnmatchedParen {
+        location: Location,
+    },
+    InvalidToken {
+        location: Location,
+    },
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::UnexpectedToken { expected, found, location } => {
+                write!(f, "Expected {} but found {:?} at line {}, column {}", 
+                       expected, found, location.start_line, location.start_column)
+            }
+            ParseError::UnexpectedEof { expected, location } => {
+                write!(f, "Unexpected end of file, expected {} at line {}, column {}", 
+                       expected, location.start_line, location.start_column)
+            }
+            ParseError::InvalidNumber { text, location } => {
+                write!(f, "Invalid number '{}' at line {}, column {}", 
+                       text, location.start_line, location.start_column)
+            }
+            ParseError::UnterminatedString { location } => {
+                write!(f, "Unterminated string at line {}, column {}", 
+                       location.start_line, location.start_column)
+            }
+            ParseError::UnmatchedParen { location } => {
+                write!(f, "Unmatched opening parenthesis at line {}, column {}", 
+                       location.start_line, location.start_column)
+            }
+            ParseError::InvalidToken { location } => {
+                write!(f, "Invalid token at line {}, column {}", 
+                       location.start_line, location.start_column)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TokenKind {
     LParen,
     RParen,
@@ -17,25 +93,61 @@ enum TokenKind {
     Eof,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Token<'src> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Token {
     kind: TokenKind,
-    value: &'src str,
+    span: Span,
     location: Location,
 }
 
-impl<'src> Token<'src> {
-    pub fn new(kind: TokenKind, value: &'src str, location: Location) -> Self {
+impl<'src> Token {
+    pub fn new(
+        kind: TokenKind,
+        start: usize,
+        end: usize,
+        start_line: u32,
+        start_column: u32,
+        end_line: u32,
+        end_column: u32,
+    ) -> Self {
         Self {
             kind,
-            value,
-            location,
+            span: Span { start, end },
+            location: Location {
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+            },
         }
+    }
+
+    pub fn text(&self, source: &'src str) -> &'src str {
+        &source[self.span.start..self.span.end]
     }
 }
 
+fn is_symbol_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || byte == b'_'
+        || byte == b'?'
+        || byte == b'!'
+        || byte == b'='
+        || byte == b'<'
+        || byte == b'>'
+        || byte == b'-'
+        || byte == b'+'
+        || byte == b'*'
+        || byte == b'/'
+        || byte == b'%'
+        || byte == b'&'
+        || byte == b'|'
+        || byte == b'~'
+        || byte == b'#'
+}
+
 struct Lexer<'src> {
-    source: &'src str,
+    bytes: &'src [u8],
     start: usize,
     current: usize,
     line: u32,
@@ -45,174 +157,342 @@ struct Lexer<'src> {
 impl<'src> Lexer<'src> {
     pub fn new(source: &'src str) -> Self {
         Self {
-            source,
+            bytes: source.as_bytes(),
             start: 0,
             current: 0,
             line: 1,
             column: 1,
         }
     }
-}
 
-impl<'src> Iterator for Lexer<'src> {
-    type Item = Token<'src>;
+    pub fn collect(&mut self) -> Result<Vec<Token>, ParseError> {
+        let mut tokens = Vec::new();
+        while self.peek() != b'\0' {
+            let token = self.next()?;
+            tokens.push(token);
+        }
+        Ok(tokens)
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        skip_whitespace(self);
+    fn simple_token(&self, kind: TokenKind) -> Token {
+        self.make_token(kind, self.line, self.column)
+    }
+
+    fn make_token(&self, kind: TokenKind, start_line: u32, start_column: u32) -> Token {
+        Token {
+            kind,
+            span: Span {
+                start: self.start,
+                end: self.current,
+            },
+            location: Location {
+                start_line,
+                start_column,
+                end_line: self.line,
+                end_column: self.column,
+            },
+        }
+    }
+
+    fn peek(&self) -> u8 {
+        if self.current < self.bytes.len() {
+            self.bytes[self.current]
+        } else {
+            b'\0'
+        }
+    }
+
+    fn consume(&mut self) -> u8 {
+        let byte = self.peek();
+        self.current += 1;
+        if byte == b'\n' {
+            self.line += 1;
+            self.column = 1;
+        } else {
+            self.column += 1;
+        }
+        byte
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self.peek().is_ascii_whitespace() {
+            self.consume();
+        }
+    }
+
+    fn skip_comment(&mut self) {
+        while self.peek() != b'\n' && self.peek() != b'\0' {
+            self.consume();
+        }
+        if self.peek() == b'\n' {
+            self.consume();
+        }
+    }
+
+    fn next(&mut self) -> Result<Token, ParseError> {
+        self.skip_whitespace();
         self.start = self.current;
 
-        let ch = match consume_char(self) {
-            Some(ch) => ch,
-            None => return Some(Token::new(TokenKind::Eof, "", Location { line: self.line, column: self.column })),
-        };
+        let start_line = self.line;
+        let start_column = self.column;
 
-        match ch {
-            '(' => Some(take_token(self, TokenKind::LParen)),
-            ')' => Some(take_token(self, TokenKind::RParen)),
-            '[' => Some(take_token(self, TokenKind::LBracket)),
-            ']' => Some(take_token(self, TokenKind::RBracket)),
-            '{' => Some(take_token(self, TokenKind::LBrace)),
-            '}' => Some(take_token(self, TokenKind::RBrace)),
-            '\'' => Some(take_token(self, TokenKind::Quote)),
-            ';' => take_comment(self),
-            '"' => take_string(self),
-            '0'..='9' => take_number(self),
-            ch if is_symbol_char(ch) => take_symbol(self),
-            _ => take_error(self, "Unexpected character"),
+        let byte = self.consume();
+
+        match byte {
+            b'(' => Ok(self.simple_token(TokenKind::LParen)),
+            b')' => Ok(self.simple_token(TokenKind::RParen)),
+            b'[' => Ok(self.simple_token(TokenKind::LBracket)),
+            b']' => Ok(self.simple_token(TokenKind::RBracket)),
+            b'{' => Ok(self.simple_token(TokenKind::LBrace)),
+            b'}' => Ok(self.simple_token(TokenKind::RBrace)),
+            b'\'' => Ok(self.simple_token(TokenKind::Quote)),
+            b'"' => self.string_token(start_line, start_column),
+            b';' => {
+                self.skip_comment();
+                self.next()
+            }
+            b'0'..=b'9' => Ok(self.number_token(start_line, start_column)),
+            b if is_symbol_char(b) => Ok(self.symbol_token(start_line, start_column)),
+            b'\0' => Ok(self.simple_token(TokenKind::Eof)),
+            _ => Err(ParseError::InvalidToken {
+                location: Location {
+                    start_line,
+                    start_column,
+                    end_line: self.line,
+                    end_column: self.column,
+                },
+            }),
         }
     }
-}
 
-fn peek_char<'src>(lexer: &mut Lexer<'src>) -> Option<char> {
-    lexer.source.chars().nth(lexer.current)
-}
-
-fn consume_char<'src>(lexer: &mut Lexer<'src>) -> Option<char> {
-    match peek_char(lexer) {
-        Some(ch) => {
-            lexer.current += 1;
-            Some(ch)
+    fn string_token(&mut self, start_line: u32, start_column: u32) -> Result<Token, ParseError> {
+        while self.peek() != b'"' && self.peek() != b'\0' {
+            self.consume();
         }
-        None => None,
-    }
-}
-
-fn take_lexeme<'src>(lexer: &mut Lexer<'src>) -> &'src str {
-    let start = lexer.start;
-    let end = lexer.current;
-    &lexer.source[start..end]
-}
-
-fn take_token<'src>(lexer: &mut Lexer<'src>, kind: TokenKind) -> Token<'src> {
-    Token::new(
-        kind,
-        take_lexeme(lexer),
-        Location {
-            line: lexer.line,
-            column: lexer.column,
-        },
-    )
-}
-
-fn skip_whitespace<'src>(lexer: &mut Lexer<'src>) {
-    while let Some(ch) = peek_char(lexer) {
-        if ch.is_whitespace() {
-            consume_char(lexer);
-        } else {
-            break;
+        if self.peek() == b'\0' {
+            return Err(ParseError::UnterminatedString {
+                location: Location {
+                    start_line,
+                    start_column,
+                    end_line: self.line,
+                    end_column: self.column,
+                },
+            });
         }
+        self.consume(); // consume closing quote
+        Ok(self.make_token(TokenKind::String, start_line, start_column))
     }
-}
 
-fn take_comment<'src>(lexer: &mut Lexer<'src>) -> Option<Token<'src>> {
-    // skip over semicolons
-    while let Some(ch) = peek_char(lexer) {
-        if ch == ';' {
-            consume_char(lexer);
-        } else {
-            break;
+    fn number_token(&mut self, start_line: u32, start_column: u32) -> Token {
+        while self.peek().is_ascii_digit() {
+            self.consume();
         }
-    }
-    // junk token
-    let _ = take_token(lexer, TokenKind::Comment);
-    lexer.start = lexer.current;
-    // then take to the end of the line
-    while let Some(ch) = peek_char(lexer) {
-        if ch == '\n' {
-            break;
-        }
-        consume_char(lexer);
-    }
-    // comment token
-    Some(take_token(lexer, TokenKind::Comment))
-}
 
-fn take_string<'src>(lexer: &mut Lexer<'src>) -> Option<Token<'src>> {
-    while let Some(ch) = peek_char(lexer) {
-        if ch == '"' {
-            break;
-        } else if ch == '\\' {
-            // skip over the escape character
-            consume_char(lexer);
-            // consume the next character
-            consume_char(lexer);
-        } else {
-            consume_char(lexer);
-        }
-    }
-    // trim quotes
-    let lexeme = take_lexeme(lexer);
-    let trimmed = &lexeme[1..lexeme.len() - 1];
-    Some(Token::new(
-        TokenKind::String,
-        trimmed,
-        Location {
-            line: lexer.line,
-            column: lexer.column,
-        },
-    ))
-}
-
-fn take_number<'src>(lexer: &mut Lexer<'src>) -> Option<Token<'src>> {
-    while let Some(ch) = peek_char(lexer) {
-        if ch.is_digit(10) {
-            consume_char(lexer);
-        } else {
-            break;
-        }
-    }
-    if let Some('.') = peek_char(lexer) {
-        consume_char(lexer);
-        while let Some(ch) = peek_char(lexer) {
-            if ch.is_digit(10) {
-                consume_char(lexer);
-            } else {
-                break;
+        if self.peek() == b'.' {
+            self.consume();
+            while self.peek().is_ascii_digit() {
+                self.consume();
             }
         }
+
+        self.make_token(TokenKind::Number, start_line, start_column)
     }
-    Some(take_token(lexer, TokenKind::Number))
+
+    fn symbol_token(&mut self, start_line: u32, start_column: u32) -> Token {
+        while is_symbol_char(self.peek()) {
+            self.consume();
+        }
+        self.make_token(TokenKind::Symbol, start_line, start_column)
+    }
 }
 
-const SYMBOL_CHARS: [char; 14] = [
-    '!', '?', '/', '=', '+', '-', '*', '%', '<', '>', '&', '|', '#', '_'
-];
-
-fn is_symbol_char(ch: char) -> bool {
-    SYMBOL_CHARS.contains(&ch) || ch.is_alphanumeric() 
+struct Parser<'src> {
+    tokens: Vec<Token>,
+    source: &'src str,
+    idx: usize,
+    stack: VecDeque<Token>,
 }
 
-fn take_symbol<'src>(lexer: &mut Lexer<'src>) -> Option<Token<'src>> {
-    while let Some(ch) = peek_char(lexer) {
-        if is_symbol_char(ch) || ch.is_digit(10) {
-            consume_char(lexer);
+impl<'src> Parser<'src> {
+    pub fn new(source: &'src str) -> Result<Self, ParseError> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect()?;
+        Ok(Self {
+            tokens,
+            source,
+            idx: 0,
+            stack: VecDeque::new(),
+        })
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut exprs = Vec::new();
+        
+        while !self.is_at_end() {
+            exprs.push(self.parse_expr()?);
+        }
+        
+        // Check for unmatched parentheses
+        if let Some(unmatched) = self.stack.front() {
+            return Err(ParseError::UnmatchedParen {
+                location: unmatched.location,
+            });
+        }
+        
+        Ok(exprs)
+    }
+    
+    fn is_at_end(&self) -> bool {
+        self.idx >= self.tokens.len() || self.current_token().kind == TokenKind::Eof
+    }
+    
+    fn current_token(&self) -> Token {
+        if self.idx < self.tokens.len() {
+            self.tokens[self.idx]
         } else {
-            break;
+            // Return EOF token with last position
+            let last_line = self.tokens.last().map(|t| t.location.end_line).unwrap_or(1);
+            let last_column = self.tokens.last().map(|t| t.location.end_column).unwrap_or(1);
+            Token::new(TokenKind::Eof, 0, 0, last_line, last_column, last_line, last_column)
         }
     }
-    Some(take_token(lexer, TokenKind::Symbol))
-}
-
-fn take_error<'src>(lexer: &mut Lexer<'src>, message: &'src str) -> Option<Token<'src>> {
-    Some(Token::new(TokenKind::Error, message, Location { line: lexer.line, column: lexer.column }))
+    
+    fn advance(&mut self) -> Token {
+        let token = self.current_token();
+        if self.idx < self.tokens.len() {
+            self.idx += 1;
+        }
+        token
+    }
+    
+    fn expect(&mut self, expected: TokenKind) -> Result<Token, ParseError> {
+        let token = self.current_token();
+        if token.kind == expected {
+            Ok(self.advance())
+        } else if token.kind == TokenKind::Eof {
+            Err(ParseError::UnexpectedEof {
+                expected: format!("{:?}", expected),
+                location: token.location,
+            })
+        } else {
+            Err(ParseError::UnexpectedToken {
+                expected: format!("{:?}", expected),
+                found: token.kind,
+                location: token.location,
+            })
+        }
+    }
+    
+    fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        if self.is_at_end() {
+            return Err(ParseError::UnexpectedEof {
+                expected: "expression".to_string(),
+                location: self.current_token().location,
+            });
+        }
+        
+        let token = self.current_token();
+        
+        match token.kind {
+            TokenKind::Number => self.parse_number(),
+            TokenKind::String => self.parse_string(),
+            TokenKind::Symbol => self.parse_symbol(),
+            TokenKind::LParen => self.parse_list(),
+            TokenKind::Quote => self.parse_quote(),
+            TokenKind::Eof => Err(ParseError::UnexpectedEof {
+                expected: "expression".to_string(),
+                location: token.location,
+            }),
+            _ => Err(ParseError::UnexpectedToken {
+                expected: "expression".to_string(),
+                found: token.kind,
+                location: token.location,
+            }),
+        }
+    }
+    
+    fn parse_number(&mut self) -> Result<Expr, ParseError> {
+        let token = self.advance();
+        let text = token.text(self.source);
+        
+        if text.contains('.') {
+            text.parse::<f64>()
+                .map(Expr::Float)
+                .map_err(|_| ParseError::InvalidNumber {
+                    text: text.to_string(),
+                    location: token.location,
+                })
+        } else {
+            text.parse::<i64>()
+                .map(Expr::Int)
+                .map_err(|_| ParseError::InvalidNumber {
+                    text: text.to_string(),
+                    location: token.location,
+                })
+        }
+    }
+    
+    fn parse_string(&mut self) -> Result<Expr, ParseError> {
+        let token = self.advance();
+        let text = token.text(self.source);
+        
+        // Remove surrounding quotes
+        if text.len() >= 2 {
+            let content = &text[1..text.len()-1];
+            Ok(Expr::String(content.to_string()))
+        } else {
+            Err(ParseError::UnterminatedString {
+                location: token.location,
+            })
+        }
+    }
+    
+    fn parse_symbol(&mut self) -> Result<Expr, ParseError> {
+        let token = self.advance();
+        let text = token.text(self.source);
+        
+        Ok(match text {
+            "#t" => Expr::Bool(true),
+            "#f" => Expr::Bool(false),
+            "null" => Expr::Null,
+            _ => Expr::Symbol(text.to_string())
+        })
+    }
+    
+    fn parse_list(&mut self) -> Result<Expr, ParseError> {
+        let open_paren = self.expect(TokenKind::LParen)?;
+        self.stack.push_back(open_paren);
+        
+        let mut elements = Vec::new();
+        
+        while !self.is_at_end() && self.current_token().kind != TokenKind::RParen {
+            elements.push(self.parse_expr()?);
+        }
+        
+        self.expect(TokenKind::RParen)?;
+        self.stack.pop_back();
+        
+        // Convert Vec<Expr> to right-associative nested pairs
+        // Empty list becomes Null
+        if elements.is_empty() {
+            Ok(Expr::Null)
+        } else {
+            let mut result = Expr::Null;
+            for expr in elements.into_iter().rev() {
+                result = Expr::Pair(Box::new(expr), Box::new(result));
+            }
+            Ok(result)
+        }
+    }
+    
+    fn parse_quote(&mut self) -> Result<Expr, ParseError> {
+        self.advance(); // consume quote
+        
+        let expr = self.parse_expr()?;
+        // In Scheme, 'x is equivalent to (quote x)
+        // We'll represent this as a pair: (quote . (x . null))
+        let quote_symbol = Expr::Symbol("quote".to_string());
+        let quoted_expr = Expr::Pair(Box::new(expr), Box::new(Expr::Null));
+        Ok(Expr::Pair(Box::new(quote_symbol), Box::new(quoted_expr)))
+    }
 }
