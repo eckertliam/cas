@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use crate::model::Expr;
+use crate::model::Model;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Span {
@@ -88,7 +88,6 @@ enum TokenKind {
     Symbol,
     String,
     Number,
-    Comment,
     Error,
     Eof,
 }
@@ -325,7 +324,7 @@ impl<'src> Parser<'src> {
         })
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Expr>, ParseError> {
+    pub fn parse(&mut self) -> Result<Vec<Model>, ParseError> {
         let mut exprs = Vec::new();
         
         while !self.is_at_end() {
@@ -383,7 +382,7 @@ impl<'src> Parser<'src> {
         }
     }
     
-    fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+    fn parse_expr(&mut self) -> Result<Model, ParseError> {
         if self.is_at_end() {
             return Err(ParseError::UnexpectedEof {
                 expected: "expression".to_string(),
@@ -411,20 +410,20 @@ impl<'src> Parser<'src> {
         }
     }
     
-    fn parse_number(&mut self) -> Result<Expr, ParseError> {
+    fn parse_number(&mut self) -> Result<Model, ParseError> {
         let token = self.advance();
         let text = token.text(self.source);
         
         if text.contains('.') {
             text.parse::<f64>()
-                .map(Expr::Float)
+                .map(Model::Float)
                 .map_err(|_| ParseError::InvalidNumber {
                     text: text.to_string(),
                     location: token.location,
                 })
         } else {
             text.parse::<i64>()
-                .map(Expr::Int)
+                .map(Model::Int)
                 .map_err(|_| ParseError::InvalidNumber {
                     text: text.to_string(),
                     location: token.location,
@@ -432,14 +431,14 @@ impl<'src> Parser<'src> {
         }
     }
     
-    fn parse_string(&mut self) -> Result<Expr, ParseError> {
+    fn parse_string(&mut self) -> Result<Model, ParseError> {
         let token = self.advance();
         let text = token.text(self.source);
         
         // Remove surrounding quotes
         if text.len() >= 2 {
             let content = &text[1..text.len()-1];
-            Ok(Expr::String(content.to_string()))
+            Ok(Model::String(content.to_string()))
         } else {
             Err(ParseError::UnterminatedString {
                 location: token.location,
@@ -447,19 +446,19 @@ impl<'src> Parser<'src> {
         }
     }
     
-    fn parse_symbol(&mut self) -> Result<Expr, ParseError> {
+    fn parse_symbol(&mut self) -> Result<Model, ParseError> {
         let token = self.advance();
         let text = token.text(self.source);
         
         Ok(match text {
-            "#t" => Expr::Bool(true),
-            "#f" => Expr::Bool(false),
-            "null" => Expr::Null,
-            _ => Expr::Symbol(text.to_string())
+            "#t" => Model::Bool(true),
+            "#f" => Model::Bool(false),
+            "null" => Model::Null,
+            _ => Model::Symbol(text.to_string())
         })
     }
     
-    fn parse_list(&mut self) -> Result<Expr, ParseError> {
+    fn parse_list(&mut self) -> Result<Model, ParseError> {
         let open_paren = self.expect(TokenKind::LParen)?;
         self.stack.push_back(open_paren);
         
@@ -475,24 +474,53 @@ impl<'src> Parser<'src> {
         // Convert Vec<Expr> to right-associative nested pairs
         // Empty list becomes Null
         if elements.is_empty() {
-            Ok(Expr::Null)
+            Ok(Model::Null)
         } else {
-            let mut result = Expr::Null;
+            let mut result = Model::Null;
             for expr in elements.into_iter().rev() {
-                result = Expr::Pair(Box::new(expr), Box::new(result));
+                result = Model::Pair(Box::new(expr), Box::new(result));
             }
             Ok(result)
         }
     }
     
-    fn parse_quote(&mut self) -> Result<Expr, ParseError> {
+    fn parse_quote(&mut self) -> Result<Model, ParseError> {
         self.advance(); // consume quote
         
         let expr = self.parse_expr()?;
         // In Scheme, 'x is equivalent to (quote x)
         // We'll represent this as a pair: (quote . (x . null))
-        let quote_symbol = Expr::Symbol("quote".to_string());
-        let quoted_expr = Expr::Pair(Box::new(expr), Box::new(Expr::Null));
-        Ok(Expr::Pair(Box::new(quote_symbol), Box::new(quoted_expr)))
+        let quote_symbol = Model::Symbol("quote".to_string());
+        let quoted_expr = Model::Pair(Box::new(expr), Box::new(Model::Null));
+        Ok(Model::Pair(Box::new(quote_symbol), Box::new(quoted_expr)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_number() {
+        let mut parser = Parser::new("123").unwrap();
+        let exprs = parser.parse().unwrap();
+        assert_eq!(exprs.len(), 1);
+        assert_eq!(exprs[0], Model::Int(123));
+    }
+
+    #[test]
+    fn test_parse_string() {
+        let mut parser = Parser::new("\"Hello, World!\"").unwrap();
+        let exprs = parser.parse().unwrap();
+        assert_eq!(exprs.len(), 1);
+        assert_eq!(exprs[0], Model::String("Hello, World!".to_string()));
+    }
+    
+    #[test]
+    fn test_parse_s_expr() {
+        let mut parser = Parser::new("(1 2 3)").unwrap();
+        let exprs = parser.parse().unwrap();
+        assert_eq!(exprs.len(), 1);
+        assert_eq!(exprs[0], Model::Pair(Box::new(Model::Int(1)), Box::new(Model::Pair(Box::new(Model::Int(2)), Box::new(Model::Pair(Box::new(Model::Int(3)), Box::new(Model::Null)))))));
     }
 }

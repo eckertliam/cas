@@ -1,6 +1,7 @@
 #ifndef RUNTIME_H
 #define RUNTIME_H
 
+#include <cstdint>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@ static inline int is_heap_ptr(void *v) {
 #define TYPE_STRING_TAG 1
 #define TYPE_PAIR_TAG 2
 #define TYPE_SYMBOL_TAG 3
+#define TYPE_CLOSURE_TAG 4
 
 typedef struct {
   uint8_t tag;
@@ -55,6 +57,11 @@ typedef struct {
       void *car;
       void *cdr;
     } as_pair;
+    struct {
+      void *(*fn)(void **env, void **args, uint8_t argc);
+      void **env;
+      uint8_t env_size;
+    } as_closure;
     char *as_symbol;
   };
 } HeapObject;
@@ -74,7 +81,7 @@ static inline void *box_string(const char *s) {
   return (void *)obj;
 }
 
-static inline void *cons(void *car, void *cdr) {
+static inline void *box_pair(void *car, void *cdr) {
   HeapObject *obj = (HeapObject *)malloc(sizeof(HeapObject));
   obj->tag = TYPE_PAIR_TAG;
   obj->as_pair.car = car;
@@ -88,6 +95,19 @@ static inline void *box_symbol(const char *s) {
   obj->as_symbol = strdup(s);
   return (void *)obj;
 }
+
+static inline void *box_closure(void *(*fn)(void **env, void **args,
+                                            uint8_t argc),
+                                void **captured_env, uint8_t env_size) {
+  HeapObject *obj = (HeapObject *)malloc(sizeof(HeapObject));
+  obj->tag = TYPE_CLOSURE_TAG;
+  obj->as_closure.fn = fn;
+  obj->as_closure.env = captured_env;
+  obj->as_closure.env_size = env_size;
+  return (void *)obj;
+}
+
+// Primitive operations
 
 static inline void print_value(void *v) {
   if (v == NULL_VAL) {
